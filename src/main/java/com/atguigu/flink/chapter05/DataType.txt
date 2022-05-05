@@ -1,0 +1,24 @@
+flink 中支持的数据类型
+    Flink 使用 类型信息（TypeInformation）来统一表示数据类型，TypeInformation是所有类型描述符的基类
+
+    简单的Java & Scala 中的数据类型 都是支持的
+
+    1）基本数据类型
+         所有Java 基本数据类型及其包装类。
+    2）数组类型
+         基本数据类型
+         对象数组
+    3）复合数据类型
+        Java元组类型（Flink 内置提供的），TUPLE(0-25)
+        Scala 样例类，Scala元组
+        行类型（ROW）
+        POJO类：
+            类是公共的，独立的（无非静态内部类）
+            类有一个公共的无参构造器
+            所有字段是 public & 非 final 的
+    4）辅助类型
+        Option， Either ， List ， Map
+    5）泛型类型（GENERIC）
+
+  类型提示系统：TypeHint
+    分析函数的输入和返回类型，自动获取类型信息，从而获得对应的序列化器和反序列化器
