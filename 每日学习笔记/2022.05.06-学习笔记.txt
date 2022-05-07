@@ -1,0 +1,162 @@
+输出算子（sink）：
+    1、状态一致性：当发生故障的时候，有能力恢复之前的状态，保障处理结果的正确性
+       保证状态一致性的解决方法：flink 内部提供了 检查点（checkpoint） 保证可以回滚到正确的状态
+
+       注意：但当我们在处理过程中任意读写外部系统，发生故障后，就很难回退到从前了
+            为了避免我们随意读写外部系统，难以回退到从前，flink的 DataStream API
+            专门提供了向外部写入数据的 方法 ------ addSink
+
+    2、addSink ：
+        1）对应 “Sink" 算子，主要用来实现与外部系统连接，并将数据提交写入
+        2） sink ： 下沉 / 相对 source 数据源，也被称之为 数据汇
+                   不管怎么理解，sink 都是 Flink 中将数据收集起来，输出到外部系统的意思
+
+    3、类比 source ， Sink 算子的创建是通过调用 DataStream 的 .addSink() 方法实现
+          addSource（）的参数需要实现一个   SourceFunction 接口，类似的
+
+          addSink()方法同样需要传入一个参数 SinkFunction 接口。
+             SinkFunction接口中重写 invoke(): 将指定的值写入到外部系统中，每条数据调用一次
+
+
+    4、有哪些 Sink 算子：
+        1） print（） ：  将数据流写入标准控制台打印输出
+                源码 ： public DataStreamSink<T> print() {}
+        2） addSink() : 传入 SinkFunction 接口, 常见的连接器如下
+                Kafka
+                JDBC
+                ES
+                Redis
+                Flume
+              除此之外，需要用户自定义 sink 连接器
+
+    5、输出到文件
+          writeAsText 、writeAsCsv（） :
+                已被弃用。
+              1）不支持同时写入一个文件，则sink 的并行度只能为1 ，拖慢系统效率
+              2）故障恢复后的状态一致性无法保障
+
+              为了解决上述问题，新引入如下    流式文件系统连接器： StreamingFileSink
+
+          StreamingFileSink：
+              1）StreamingFileSink extends RichSinkFunction
+              2）集成了Flink 检查点（checkPoint）机制，用来保证精确一次（Exectly-once）的一致性语义
+              3） 实现原理：将数据写入到桶（buckets）,每个桶对应一个个大小有限的分区文件，实现分布式文件存储
+                      默认的分桶方式： 基于时间
+
+              StreamingFileSink 支持行编码（Row-encoded）和批量编码（Bulk-encoded，比如 Parquet）
+              格式。这两种不同的方式都有各自的构建器（builder），调用方法也非常简单，可以直接调用
+              StreamingFileSink 的静态方法：
+              ⚫ 行编码：StreamingFileSink.forRowFormat（basePath，rowEncoder）。
+              ⚫ 批量编码：StreamingFileSink.forBulkFormat（basePath，bulkWriterFactory）。
+              在创建行或批量编码 Sink 时，我们需要传入两个参数，用来指定存储桶的基本路径
+              （basePath）和数据的编码逻辑（rowEncoder 或 bulkWriterFactory）。
+
+             在 写入文件的时候，文件按时间进行滚动，其滚动策略(滚动策略也是通过构建器构建的)中，默认的滚动时间，如： withRolloverInterval，都是以毫秒值计算的
+             真实项目中，一般都是以分钟或小时为单位。可以使用 TimeUnit 工具类
+                TimeUnit.MINUTES.toMills(5) 可以轻松做转换
+
+    6、 将数据写入到 Kafka 中
+           Kafka 天生的流数据消息队列，与 Flink 天生一对
+           可以作为Flink 的输入源 和 输出目的地，所以 Flink 为 Kafka 提供了 Source  和 Sink
+           密不可分的原因： Flink 与 Kafka 的连接器提供了 端到端的 精确一次（Exectly-Once） 语义保障
+
+            由于写入Kafka 中，不用考虑写入的数据是否需要滚动等问题，所以写入到 Kafka 会相对简单一些。
+
+            从 Kafka 中获取数据，作为 Flink 的数据源 ：将如下的对象作为参数传入 addSource（）中
+                FlinkKafkaConsumer
+            将数据写入到 Kafka 中，将如下对象作为参数传入 addSink 中
+                FlinkKafkaProducer
+
+    7、将数据输入到 Redis 中
+            1） Flink 没有直接提供官方的 Redis 连接器， Bahir 项目提供了 Flink-Redis 的连接工具
+            2） 导入 Redis 连接器依赖：
+                    <dependency>
+                     <groupId>org.apache.bahir</groupId>
+                     <artifactId>flink-connector-redis_2.11</artifactId>
+                     <version>1.0</version>
+                    </dependency>
+            3） 启动 Redis 集群
+            3)  创建RedisSink 需要传入两个参数 ：
+                FlinkJedisPoolConfig : Jedis 的连接配置
+                RedisMapper          ： Redis 映射类接口，说明怎样将数据转换成 可以写入 Redis 的类型
+
+               FlinkJedisPoolConfig conf =  FlinkJedisPoolConfig.Builder().setHost("hadoop102").build();
+
+               MyRedisMapper implements RedisMapper<>
+
+    8、将数据写入到 ES 中
+            1) Flink 为 ES 专门提供了官方的 Sink 连接器， Flink 1.13 支持当前最新 的 ES
+            2) 添加 ES 的依赖
+                <dependency>
+                 <groupId>org.apache.flink</groupId>
+                 <artifactId>flink-connector-elasticsearch7_${scala.binary.version}</artifactId>
+                 <version>${flink.version}</version>
+                </dependency>
+            3) 启动 ES 集群
+                // 创建一个 ElasticSearchSinkFunction
+                ElasticsearchSinkFunction<Event> elasticsearchSinkFunction = new  ElasticsearchSinkFunction<Event>()
+
+                stream.addSink(new ElasticSearchSink.Builder<Event>(httpHosts, elasticsearchSinkFunction).builder);
+                依然是通过构建器进行创建的
+                    Builder 的 构造方法中两个参数：
+                        httpHost                    : 连接到 ES 集群的主机列表
+                        elasticsearchSinkFunction   : 具体处理逻辑，准备数据向 ES 发送请求的函数
+
+    9、将数据写入到 MySQL 中
+            1）添加 Flink-connet-jdbc的依赖、 mysql-connector-java的依赖
+               <dependency>
+                <groupId>org.apache.flink</groupId>
+                <artifactId>flink-connector-jdbc_${scala.binary.version}</artifactId>
+                <version>${flink.version}</version>
+               </dependency>
+               <dependency>
+                <groupId>mysql</groupId>
+                <artifactId>mysql-connector-java</artifactId>
+                <version>5.1.47</version>
+               </dependency>
+            2）首先得在 MySQL 中存在代码中的库和表
+            3） JdbcSink.sink()
+                 public static <T> SinkFunction<T> sink(
+                            String sql,
+                            JdbcStatementBuilder<T> statementBuilder,
+                            JdbcConnectionOptions connectionOptions) {
+                        return sink(sql, statementBuilder, JdbcExecutionOptions.defaults(), connectionOptions);
+                    }
+
+    10、自定义 Sink 输出
+        1） 对于 Flink 没有提供的连接器，此时需要我们自己指定相应的连接器，与我们的存储系统进行了连接，将数据写入
+        2）但是一般不推荐这样做，因为Flink 没有提供的连接器，我们自己实现的话， 状态一致性没法保障。
+        3）如果要实现，则
+            （1）创建 类 继承 RichSinkFunction 方法
+            （2）在 open(), close() 生命周期中，进行连接和关闭
+        4）以 Hbase 为例，Flink 没有提供连接 Hbase 的方式
+             （1）引入 Hbase 相关依赖
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
