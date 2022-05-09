@@ -1,0 +1,128 @@
+                                             2022.05.08 学习笔记
+6.3 窗口
+    概念
+        1、Flink 中的 窗口是 一个桶，
+            假设需要收集[0,10) 的数据，此时为了保证数据不乱序，设置一个延迟时间 2秒，
+            当第一个阶段收集 [0,10) 的数据，可能会来 11，12 秒的数据，数据正常过来就好，只是属于 [0,10)的数据正常
+            进入 [0,10) 的桶中，11，12秒的数据会创建一个新的桶，用来存储 11，12 秒的数据
+
+    分类：
+        1、按照驱动方式：
+            计数窗口： 每多少个数据 计算一次窗口
+            时间窗口： 每间隔多久开一次窗口
+
+        2、按照窗口分配数据的规则
+              一般按照窗口分配数据的规则进行数据的划分， 会先将数据进行 分区
+            滚动窗口（Tumbling Windows）： 特殊的滑动窗口： window size = window slide，只需要一个参数：window size
+            滑动窗口（Sliding Windows）： window size + window slide
+            会话窗口（Session Windows）： 需要有延迟时间
+                只能基于时间定义，没有会话计数窗口的概念
+
+                数据来了就开启一个会话窗口，如果接下来还有数据陆续到来，
+                就一直保持会话，如果一段时间没有收到数据，那就认为会话超时失效，窗口自动关闭
+                参数：
+                    Size ：代表了隔一段时间没有来数据的 一段时间
+                    Gap  ：两个数据到来的Gap时间 < Size 时间，会话保持
+                           两个数据到来的Gap时间 > Size 时间，会话中断
+
+            全局窗口（Global Windows）： 需要有触发器
+                会将相同 key 的所有数据都分配到 同一个窗口
+    6.3.3 窗口 API ：
+        1、按键分区（keyed）和非按键分区（Non - Keyed）
+            1）按键分区窗口
+                stream.keyBy(...)
+                      .window(...)
+
+            2)非按键分区窗口
+                stream.windowAll(...)
+
+        2、如何使用 窗口函数
+            stream.keyBy(Key selector)
+                  .window(window assigner)          具体开什么窗口
+                  .aggregate(window function)       开窗后的操作
+
+            真正使用过程中，window().aggregate() 整体才算是窗口的操作
+
+            窗口的种类
+    // 对 带有水位线的数据源开窗
+    WindowedStream<Event, String, TimeWindow> window = streamWithWM
+            .keyBy(data -> data.user)
+//          .countWindow(100)                                                                 // 计数窗口
+//          .window(TumblingEventTimeWindows.of(Time.milliseconds(10)))                       // 滚动事件时间窗口
+//          .window(SlidingEventTimeWindows.of(Time.milliseconds(10),Time.milliseconds(3)))   // 滑动事件时间窗口
+            .window(EventTimeSessionWindows.withGap(Time.milliseconds(10)));                  //事件事件会话窗口
+
+         3、Flink 窗口中有界流的截取处理和 Spark中批处理的区别 ？
+                对于Spark 的批处理方式，如果统计月度指标，在下个月月初快进行统计，可能一两天
+                都统计不完，这是不合理的
+                而对于Flink 来说，依然是来一条数据处理一条数据，只不过对于这种月度统计，不会立即
+                输出，而是会将计算的结果保存下来，等到最后都计算完毕再进行输出，也就是
+                    Flink 中的增量聚合函数
+
+                这也就是 Flink 使用流方式处理批数据 比 Spark 直接批处理更快的原因，没有攒数据这个过程，而是直接将数据来一条处理一条
+                最终需要结果的时候，直接输出，而Spark 则会将所有数据攒齐，然后再进行一条一条的计算
+
+         4、Flink 中采用流处理方式处理数据和批处理方式处理数据
+                流方式处理数据 ： 增量聚合函数 （来一条处理一条）
+                    增量聚合函数：
+                        聚合函数：AggregateFunction
+                        规约函数：ReduceFunction
+                                该 reduce 方法和之前计算 WC 的 reduce 是相同的 reduce
+
+                批方式处理数据： 全窗口函数 （将数据攒着，攒起来进行处理 ）
+                     WindowFunction         (逐渐被弃用)
+                     ProcessWindowFunction  （更底层的类，可以获取到水位线等信息）
+                     /*
+                     * @param <IN> The type of the input value.
+                     * @param <OUT> The type of the output value.
+                     * @param <KEY> The type of the key.
+                     * @param <W> The type of {@code Window} that this window function can be applied on.  (处理的窗口是什么类型的)
+                     */
+                    @PublicEvolving
+                    public abstract class ProcessWindowFunction<IN, OUT, KEY, W extends Window>{
+                        public abstract void process(
+                                    KEY key, Context context, Iterable<IN> elements, Collector<OUT> out) throws Exception;
+                    }
+
+                在实际使用过程中，增量聚合函数，没来一条数据处理一条数据，最后只能返回相应的结果
+                              而全窗口函数，是将所有数据都累积到窗口中，整个进行计算，最后可以返回结果，结果中可以带有当前窗口的上下文对象信息
+                        所以实际使用的过程中，我们通常是 增量聚合函数 + 全窗口函数同时使用，这样既可以一条数据一条数据进行处理，同时也可以返回对应窗口的信息
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
