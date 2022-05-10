@@ -1,0 +1,204 @@
+                                             2022.05.08 学习笔记
+6.3.7 其他API
+    对于窗口算子来说， 窗口分配器 + 窗口函数 必不可少
+    除此之外，Flink 提供了其他API 来灵活控制窗口行为
+
+    1、触发器(Trigger)
+        主要控制窗口什么时候触发计算（触发计算： 本质就是执行窗口函数，可认为是计算得到结果并输出的过程）
+
+        1） Flink 内置的窗口类型，它们的触发器都已经做了实现。
+               EventTimeTrigger
+               ProcessingTimeTrigger
+               CountTrigger
+
+        2） Trigger 是一个抽象类，有四个抽象方法：
+                onElement（）         ：窗口中每来一个元素，都会调用这个方法
+                onEventTime（）       ：当注册的事件时间定时器触发时，将调用这个方法
+                onProcessingTime（）  ：当注册的处理时间定时器触发时，将调用这个方法
+                clear（）             ：当窗口关闭销毁时，调用这个方法，一般用来清除自定义的状态
+
+        3） 定时器（Timer）： 设定的一个闹钟，代表未来某个时间点会执行的事件，当时间进展到设定的值时，会执行定义好的操作
+
+        4） 前三个方法是怎么与 Window 产生联系的呢？
+                前三个方法的返回值类型 都是 TriggerResult，是一个枚举类型
+                    CONTINUE(继续)     ： 什么都不做
+                    FIRE(触发)         ： 触发计算，输出结果
+                    PURGE(清除)        ： 清空窗口中的所有数据，销毁窗口
+                    FIRE_AND_PURGE     ： （触发并清除）触发计算输出结果，并清除窗口
+
+    2、移除器(Evictor)
+        1）作用： 主要用来定义移除某些数据的逻辑
+
+        2） Evictor 接口，两个方法
+                evictBefore() : 定义执行窗口函数之前的移除数据操作
+                evictAfter()  : 定义执行窗口函数之后的以处数据操作
+
+    3、允许延迟(Allowed Lateness)
+        真的让窗口延迟一段时间, 解决迟到的数据的问题，解决那些超过了 watermark ，依然迟到的数据
+        而水位线的延迟，类比开车的话，是司机主动将自己的表调慢了一段时间
+        DataStream winAggStream =
+                    window(xxx)
+                    .allowedLateness（）
+                    .aggregate(xxx)
+
+    4、将迟到的数据放入测输出流()
+        OutputTag<Event> outputTag = new OutputTag<Event>("late"){};
+
+       DataStream winAggStream =
+            window(xxx)
+            .sideOutputLateData(outputTag)
+            .aggregate(xxx)
+
+        DataStream<Event> lateStream = winAggStream.getSideOutput(outputTag);
+
+    以上API 都是在 window() 和 aggregate 之间进行使用的
+
+
+    综上所述，Flink 先通过 WaterMark 保证最近几秒的数据，依然可以被收集到窗口中，但是这样也不能保证在之后没有延迟的数据
+    那么就可以给一个允许延迟的和时间 allowedLateness(Time.minutes(10)), 这样的措施保证，依然在进行窗口的计算，只是窗口没有
+    被立即销毁掉，而是不断等待数据进来，当这个时间结束，窗口销毁的时候。 如果还有延迟的数据，那么就将数据先存储到侧输出流中
+    测数据流计算完毕，再将结果存放到对应的窗口中
+
+    这就类似于 之前的 lamdba 架构，先用一个流式的处理系统保证处理时的低延迟特性，再通过等待数据的到来，完成最终结果的准确性
+    特点。
+
+    Flink 保证处理延迟数据的三重保障：
+     水位线            ： Watermarks
+     允许最大延迟      ： allowedLateness
+     侧输出流          ： sideOutputLateData
+
+第 7 章： 处理函数
+    1、ProcessFunction extends AbstractRichFunction
+        ProcessFunction 中有：
+            富函数、 环境信息、 定时器（只针对KeyedStream）、侧输出流
+
+        1）处理函数由于继承了 富函数，所以富函数中所有的功能， ProcessFunction 都是可以做的
+            可以访问状态（state）和其他运行时信息
+        2）processElement（）；
+        3）onTimer（）:
+             .onTimer()方法只是定时器触发时的操作，而定时器（timer）
+              真正的设置需要用到上下文 ctx 中的定时服务。在 Flink 中，只有“按键分区流”KeyedStream
+              才支持设置定时器的操作
+        4）Context 上下文对象
+            |--timestamp
+            |--timerService()  定时服务
+                可通过“定时服务” 访问流中的事件（event）、时间戳（timestamp）、水位线
+                            （watermark），甚至可以注册“定时事件”。
+                注册定时器，只有KeyedStream 中可以使用定时器
+                // 注册定时器
+                 ctx.timerService().registerProcessingTimeTimer(10 * 1000L);
+
+                 注册完定时器，需要结合开启定时器一起使用
+                 实现 onTimer（）方法，在 onTimer 中实现定时器相关的功能
+            |--output
+        5）处理函数还可以直接将数据输出到侧输出流（side output）中。
+
+    如果输入数据结束，watermark 会变为 long 的最大值
+
+   2、8 种处理函数
+        最常用的（前三个）：
+            ProcessFunction
+
+            KeyedProcessFunction
+
+            ProcessWindowFunction
+
+            ProcessAllWindowFunction
+
+            CoProcessFunction
+
+            ProcessJoinFunction
+
+            BroadcastProcessFunction
+
+            KeyedBroadcastProcessFunction
+
+   3、TimeService 是 Flink 关于时间和定时器的基础服务接口，包含以下 6 个方法
+            // 获取当前的处理时间
+            long currentProcessingTime();
+            // 获取当前的水位线（事件时间）
+            long currentWatermark();
+            // 注册处理时间定时器，当处理时间超过 time 时触发
+            void registerProcessingTimeTimer(long time);
+            // 注册事件时间定时器，当水位线超过 time 时触发
+            void registerEventTimeTimer(long time);
+            // 删除触发时间为 time 的处理时间定时器
+            void deleteProcessingTimeTimer(long time);
+            // 删除触发时间为 time 的处理时间定时器
+            void deleteEventTimeTimer(long time);
+
+   4、分流
+        侧输出流 ：
+            1、可以通过process 算子实现
+              .process(
+                xxxx.output
+              )
+
+            2、开窗后，将延迟的数据写入到侧输出流中
+                .window()
+                .sideOutputLateData() :
+
+第 8 章 多流转换
+    union ： 多条流中的数据类型相同时，可以是 调用 dataStream1.union(dataStream2)
+        对于多个流中的数据类型相同时， 对多个流的合并采用 Union ，合并后的结果为 DataStream
+
+    connect : 多条流中的数据类型不相同时，可以使用 d1.connect(d2) --》 ConnectStream
+                然后需要将返回的结果调用 map/ flatmap/ process 进行转换
+                例如 map算子： .map(new CoMapFunction<IN1, IN2, OUT>(){})
+                将流1  中的数据，流2 中的数据进行转换，最终转换成一个相同的数据类型--》 才能
+                得到 DataStream
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
