@@ -1,4 +1,4 @@
-package com.atguigu.flink.chapter06;
+package com.atguigu.flink.chapter07;
 
 /**
  * @author Adam-Ma
