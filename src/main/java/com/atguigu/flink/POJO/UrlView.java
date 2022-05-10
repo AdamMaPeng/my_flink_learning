@@ -8,7 +8,10 @@ package com.atguigu.flink.POJO;
  * @phone 18852895353
  */
 
+
 import org.apache.commons.net.ntp.TimeStamp;
+
+import java.sql.Timestamp;
 
 /**
  *      URL 对应的 POJO 类
@@ -30,8 +33,8 @@ public class UrlView {
         return "UrlView{" +
                 "urlName='" + urlName + '\'' +
                 ", visitCount=" + visitCount +
-                ", startTime=" + new TimeStamp(startTime) +
-                ", endTime=" + new TimeStamp(endTime) +
+                ", startTime=" + new Timestamp(startTime) +
+                ", endTime=" + new Timestamp(endTime) +
                 '}';
     }
 
